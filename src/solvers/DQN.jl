@@ -67,7 +67,7 @@ type DQNPolicy{S,A} <: POMDPs.Policy
     mdp::MDP{S,A}
 end
 
-function POMDPs.create_policy(sol::DQN, mdp::MDP)
+function create_policy(sol::DQN, mdp::MDP)
     A = iterator(actions(mdp))
     return DQNPolicy(
                     isnull(sol.nn.exec) ? nothing : sol.nn.exec,
@@ -79,25 +79,60 @@ function POMDPs.create_policy(sol::DQN, mdp::MDP)
 end
 # TODO constructor
 
-function POMDPs.action{S,A}(p::DQNPolicy{S,A}, s::S, a::A=create_action(p.mdp) ) 
-    # TODO figure out if its better to have a reference to the mdp
 
-    # assuming that s is of the right type and stuff, means one less handle
+# TODO make this more standard
+function scale(s_vec)
+    return s_vec./[10000,10000,100,1,1]
+end
 
+function unscale(s_vec)
+    return s_vec.*[10000,10000,100,1,1]
+end
+
+function util{S,A}(p::DQNPolicy{S,A}, s::S)
     # move to computational graph -- potential bottleneck?
-    s_vec = vec(p.mdp, s)
+    s_vec = scale(vec(p.mdp, s))
     mx.copy!(p.exec.arg_dict[p.input_name], convert(Array{Float32,2}, reshape(s_vec, length(s_vec), 1) ) )
 
     mx.forward( p.exec )
 
     # possible bottleneck: copy output, get maximum element
     # TODO this won't work--change shape of one of the two
-    copy!( p.q_values, p.exec.outputs[1] )
+    #copy!( p.q_values, p.exec.outputs[1] )
+    q_values = vec( mx.copy!( zeros(Float32, size(p.exec.outputs[1])), p.exec.outputs[1] ) )
 
-    p_desc = sortperm( p.q_values, rev=true)
+    p_desc = sortperm( q_values, rev=true)
 
     # return the highest value legal action
     As = POMDPs.actions( p.mdp, s ) # TODO action space arg to keep things memory efficient
+    for idx in p_desc
+        a = p.actions[idx]
+        if a in As
+            return q_values[idx]
+        end
+    end
+end
+
+function POMDPs.action{S,A}(p::DQNPolicy{S,A}, s::S) 
+    # TODO figure out if its better to have a reference to the mdp
+
+    # assuming that s is of the right type and stuff, means one less handle
+
+    # move to computational graph -- potential bottleneck?
+    s_vec = scale(vec(p.mdp, s))
+    mx.copy!(p.exec.arg_dict[p.input_name], convert(Array{Float32,2}, reshape(s_vec, length(s_vec), 1) ) )
+
+    mx.forward( p.exec )
+
+    # possible bottleneck: copy output, get maximum element
+    # TODO this won't work--change shape of one of the two
+    #copy!( p.q_values, p.exec.outputs[1] )
+    q_values = vec( mx.copy!( zeros(Float32, size(p.exec.outputs[1])), p.exec.outputs[1] ) )
+
+    p_desc = sortperm( q_values, rev=true)
+
+    # return the highest value legal action
+    As = iterator(POMDPs.actions( p.mdp, s )) # TODO action space arg to keep things memory efficient
     for idx in p_desc
         a = p.actions[idx]
         if a in As
@@ -111,15 +146,15 @@ end
 
 
 
-function action{S,A}(p::EpsilonGreedy, solver::DQN, mdp::MDP{S,A}, s::S, rng::AbstractRNG, As_all::Vector{A}, a::A=create_action(mdp))
+function action{S,A}(p::EpsilonGreedy, solver::DQN, mdp::MDP{S,A}, s::S, rng::AbstractRNG, As_all::Vector{A}, a::A=As_all[1])
 
     # move to computational graph -- potential bottleneck?
-    s_vec = convert(Vector{Float32}, vec(mdp, s) )
+    s_vec = convert(Vector{Float32}, scale(vec(mdp, s)) )
     mx.copy!(get(solver.nn.exec).arg_dict[solver.nn.input_name], reshape(s_vec, length(s_vec), 1) )
 
     mx.forward( get(solver.nn.exec) )
 
-    # possible bottleneck: copy output, get maximum element
+    # possible bottleneck: copy output, get maximum element ( argmax over online network )
     q_values = vec( mx.copy!( zeros(Float32, size(get(solver.nn.exec).outputs[1])), get(solver.nn.exec).outputs[1] ) )
 
     As = iterator(POMDPs.actions( mdp, s ) ) # TODO action space arg to keep things memory efficient
@@ -154,6 +189,38 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
     # TODO preallocate s, a, r, sp
     td_avg = 0.
 
+    # # nonterminal sp experiences
+    # s_batch = []
+    # a_batch = []
+    # r_batch = []
+    # sp_batch = []
+
+    # # terminal sp experiences
+    # s_term = []
+    # a_term = []
+    # r_term = []
+
+    # for idx = 1:nn.batch_size
+    #     s_idx, a_idx, r, sp_idx, terminalp = peek(mem, rng=rng)
+
+    #     if terminalp
+    #         append!(s_batch, mx.expand_dims(state(mem, s_idx), axis=1) )
+    #         append!(sp_batch, mx.expand_dims(state(mem, sp_idx), axis=1) )
+    #         append!(a_batch, a_idx)
+    #         append!(r_batch, r)
+    #     else
+    #         append!(s_batch, mx.expand_dims(state(mem, s_idx), axis=1) )
+    #         append!(a_batch, a_idx)
+    #         append!(r_batch, r)
+    #     end
+    # end
+
+    # # compute values of argmax_ap qp(sp,ap) 
+    # sp_input_batch = mx.concat(sp_batch..., dim=1)
+    # mx.copy!()
+    #println("dqn_update, mem has size $(size(mem))")
+
+
     for idx = 1:nn.batch_size
         s_idx, a_idx, r, sp_idx, terminalp = peek(mem, rng=rng)
 
@@ -161,30 +228,53 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
         # setup input data accordingly
         # TODO abstract out to kDim input
         mx.copy!( target_nn.arg_dict[nn.input_name], state(mem, sp_idx) )
+        mx.copy!( get(nn.exec).arg_dict[nn.input_name], state(mem, sp_idx) )
 
         # get target
         # TODO need discount/mdp
         mx.forward( target_nn )
-        qps = vec(copy!(zeros(Float32,size( target_nn.outputs[1] ) ), target_nn.outputs[1]))
+        mx.forward( get(nn.exec) )
+        qps = vec(copy!(zeros(Float32,size( get(nn.exec).outputs[1] ) ), get(nn.exec).outputs[1]))
+        qps_target = vec(copy!(zeros(Float32,size( target_nn.outputs[1] ) ), target_nn.outputs[1]))
+        _ , ap_idx = findmax(qps) 
         if terminalp
             qp = r
         else
-            qp = r + disc * qps[a_idx]
+            qp = r + disc * qps_target[ap_idx]
         end
 
         # setup target, do forward, backward pass to get gradient
         mx.copy!( get(nn.exec).arg_dict[nn.input_name], state(mem, s_idx) )
         mx.forward( get(nn.exec), is_train=true )
         qs = copy!( zeros(Float32, size(get(nn.exec).outputs[1])), get(nn.exec).outputs[1])
+
+        # if isnan(qs[a_idx])
+        #     warn("ah shit qs")
+        #     display(state(mem, s_idx))
+        #     error("abort now")
+        # end
+        # if isnan(qp)
+        #     warn("ah shit qp")
+        # end
+
         td_avg += (qp - qs[a_idx])^2
+
+        # if !(isnan(td_avg))
+        #     warn("all good")
+        # end
+        #println("s: $(mx.try_get_shared(state(mem, s_idx))), a: $(a_idx), q:$(qs[a_idx]), qp:$(qp)")
 
         qs[a_idx] = qp
         mx.copy!( get(nn.exec).arg_dict[nn.target_name], qs ) 
         mx.backward( get(nn.exec) )
+
     end
 
-
+    #println("updating weights")
     update!(nn)
+
+
+
     #= keep until debug shows above works
     # perform update on network
     for (idx, (param, grad)) in enumerate( zip( get(nn.exec).arg_arrays, get(nn.exec).grad_arrays ) )
@@ -215,12 +305,12 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
 
 end
 
-function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=POMDPs.create_policy(solver, mdp), rng::AbstractRNG=RandomDevice())
+function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(solver, mdp), rng::AbstractRNG=RandomDevice())
 
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if isnull(solver.replay_mem)
         # TODO add option to choose what kind of replayer to use
-        solver.replay_mem = UniformMemory(mdp)
+        solver.replay_mem = UniformMemory(mdp, mem_size=100000) #PrioritizedMemory(mdp,capacity=2048) # 
     end
 
     # get all actions: this is for my/computational convenience
@@ -231,13 +321,14 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=POMDPs.create_
     # complete setup for neural ntwork if necessary
     if !solver.nn.valid
         warn("You didn't specify a neural network or your number of output units didn't match the number of actions. Either way, not recommended")
-        fc = mx.FullyConnected(name=:fc_last, num_hidden=length(As), data=solver.nn.arch)
-        solver.nn.arch = mx.LinearRegressionOutput(name=:output, data=fc, label=mx.Variable(:target))
+        fc = mx.FullyConnected(mx.SymbolicNode, name=:fc_last, num_hidden=length(As), data=solver.nn.arch)
+        solver.nn.arch = mx.LinearRegressionOutput(mx.SymbolicNode, name=:output, data=fc, label=mx.Variable(:target))
         solver.nn.valid = true
     end
 
     # setup policy if neccessary
     if isnull(solver.nn.exec)
+        warn("target_nn is just a copy!!")
         if isnull(solver.target_nn)
             solver.target_nn = initialize!(solver.nn, mdp, copy=true)
         else
@@ -280,15 +371,16 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=POMDPs.create_
                 # update replay memory
                 push!( get(solver.replay_mem), s_vec, a_idx, r, sp_vec, terminalp, _td, rng=rng)
 
+                td = 0
                 if size( get(solver.replay_mem) ) > solver.nn.batch_size
                 # only update every batch_size steps? or what?
                     refresh_target = mod(ctr, solver.target_refresh_interval) == 0
                     td = dqn_update!( solver.nn, get(solver.target_nn), get(solver.replay_mem), refresh_target, discount(mdp), rng )
+
+                    # TODO target network update
+
+                    td_avg += td
                 end
-
-                # TODO target network update
-
-                td_avg += td
 
                 r_total += disc*r
 
@@ -327,7 +419,7 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=POMDPs.create_
             # print relevant metrics
             print("Epoch ", ep, 
                 "\n\tTD: ", mean(solver.stats["td"][ep-solver.checkpoint_interval+1:ep]), 
-                "\n\tTotal Reward: ", mean(solver.stats["r_total"][ep-solver.checkpoint_interval+1:ep]), "\n")
+                "\n\tTotal Reward: ", mean(solver.stats["r_total"][ep-solver.checkpoint_interval+1:ep]),"\n")
 
         end
         #return r_total

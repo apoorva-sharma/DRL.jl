@@ -26,11 +26,13 @@ function UniformMemory(mdp::MDP;
                         vectorized_actions::Bool=false,
                         mem_size::Int=256, 
                         rng::Nullable{AbstractRNG}=Nullable{AbstractRNG}())
-    s = create_state(mdp)
+    s = initial_state(mdp, RandomDevice())
     s_vec = vec(mdp, s)
-    if length(s_vec) == 2 && size(s_vec)[2] == 1
-        s_vec = vec(s_vec)
-    end
+    # if length(s_vec) == 2
+    #     if size(s_vec)[2] == 1
+    #         s_vec = vec(s_vec)
+    #     end
+    # end
 
     # TODO is there any case in which actions might have a higher dimensional representation?
     if vectorized_actions
@@ -50,7 +52,7 @@ function UniformMemory(mdp::MDP;
                         rng
                         )
 end
-size(mem::UniformMemory) = size(mem.states, 2) / 2
+size(mem::UniformMemory) = mem.mem_size # ??size(mem.states, 2) / 2
 function push!(mem::UniformMemory, 
                 s_vec::RealVector,
                 a::IntRealVector,
@@ -59,7 +61,6 @@ function push!(mem::UniformMemory,
                 terminalp::Bool=false,
                 td::Real=1.;
                 rng::Union{Void,AbstractRNG}=nothing )
-
     if mem.mem_size * 2 > size(mem.states, 2)
         error("Oh shoot something messed up here")
     end
@@ -101,7 +102,7 @@ function push!(mem::UniformMemory,
     mem.terminals[mem.mem_size] = terminalp
 
     mem.states[mem.mem_size:mem.mem_size] = reshape(s_vec, length(s_vec), 1)
-    idx2 = mem.mem_size + mem.mem_size
+    idx2 = mem.mem_size + convert(Int, size(mem.states, 2)/2)
     mem.states[idx2:idx2] = reshape(sp_vec, length(sp_vec), 1)
 
 end
@@ -125,13 +126,134 @@ action(mem::UniformMemory, idx::Int) = mem.actions[idx:idx]
 # TODO ref paper
 # TODO add a bunch of stuff that is consistent with UniformMemory
 type PrioritizedMemory <: ReplayMemory
+    capacity::Int
     states::mx.NDArray # giant NDArray for speed--probably not too much fatter in memory
-    action_indices::Vector{Int} # which action was taken
+    actions::Vector{Int} # which action was taken
     rewards::RealVector
-    priorities::RealVector
+    terminals::Vector{Bool}
+
     mem_size::Int
-    rng::AbstractRNG
+    priority_tree::RealVector
+    eps::Float64
+
+    write_idx::Int64
+
+    rng::Nullable{AbstractRNG}
 end
 
-size(mem::PrioritizedMemory) = size(mem.states, 2) / 2
-# TODO
+function PrioritizedMemory(mdp::MDP; 
+                        capacity::Int=256, 
+                        rng::Nullable{AbstractRNG}=Nullable{AbstractRNG}())
+    s = initial_state(mdp, RandomDevice())
+    s_vec = vec(mdp, s)
+
+    acts = zeros(Int, capacity)
+
+    return PrioritizedMemory(
+                        capacity,
+                        mx.zeros(size(s_vec)..., 2*capacity),
+                        zeros(Int, capacity),
+                        zeros(capacity),
+                        falses(capacity),
+                        0,
+                        zeros(Float64, capacity*2 - 1),
+                        0.01,
+                        1,
+                        rng
+                        )
+end
+
+size(mem::PrioritizedMemory) = mem.mem_size
+
+# priority_tree functions
+# propagate change to a tree leaf to the root
+function propagate!(tree::RealVector, idx::Int64, change::Float64)
+    parent = convert(Int, floor( ((idx-1) - 1) / 2 ) + 1)
+    tree[parent] += change
+
+    if parent != 1 # i.e. we are not at the root
+        propagate!(tree, parent, change)
+    end
+end
+
+# retrieve the first element from the tree such that the elements considered so far sum up to s
+function retrieve(tree::RealVector, idx::Int64, s::Float64)
+    left = 2*(idx-1) + 2
+    right = left + 1
+
+    if left > length(tree)
+        return idx
+    end
+
+    if s <= tree[left]
+        return retrieve(tree, left, s)
+    else
+        return retrieve(tree, right, s-tree[left])
+    end
+end
+
+# update the priority at idx to have the given value
+function update!(tree::RealVector, idx::Int64, priority::Float64)
+    change = priority - tree[idx]
+    tree[idx] = priority
+    propagate!(tree, idx, change)
+end
+
+# return the total prioirty in the tree
+total(tree::RealVector) = tree[1]
+
+# PrioritizedMemory functions
+function push!(mem::PrioritizedMemory, 
+               s_vec::RealVector,
+               a::Int,
+               r::Real,
+               sp_vec::RealVector,
+               terminalp::Bool=false,
+               td::Real=1.;
+               rng::Union{Void,AbstractRNG}=nothing)
+    tree_idx = mem.write_idx + (mem.capacity - 1)
+
+    #write data at write_idx
+    mem.actions[mem.write_idx] = a
+    mem.rewards[mem.write_idx] = r
+    mem.terminals[mem.write_idx] = terminalp
+
+    mem.states[mem.write_idx:mem.write_idx] = reshape(s_vec, length(s_vec), 1)
+    
+    idx2 = mem.write_idx + mem.capacity
+
+    mem.states[idx2:idx2] = reshape(sp_vec, length(sp_vec), 1)
+
+    # increment write position
+    mem.write_idx += 1
+    if mem.write_idx > mem.capacity
+        mem.write_idx = 1
+    end
+
+    # increment memory size
+    if mem.mem_size < mem.capacity
+        mem.mem_size += 1
+    end
+
+    # update tree with the new priority element
+    update!(mem.priority_tree, tree_idx, 1.)#abs(td)+mem.eps)
+end
+
+function peek(mem::PrioritizedMemory; rng::Union{Void,AbstractRNG}=nothing )
+
+    s = total(mem.priority_tree)*rand( rng==nothing ? mem.rng : rng )
+
+    tree_idx = retrieve(mem.priority_tree, 1, s)
+
+    idx = tree_idx - (mem.capacity - 1)
+
+    return idx, 
+            mem.actions[idx], 
+            mem.rewards[idx], 
+            idx + mem.capacity,
+            mem.terminals[idx]
+end
+
+state(mem::PrioritizedMemory, idx::Int) = mem.states[idx:idx]
+action(mem::PrioritizedMemory, idx::Int) = mem.actions[idx:idx]
+

@@ -86,7 +86,7 @@ type DDPGPolicy{S,A} <: POMDPs.Policy
     a_vec::Vector{Float32}
     mdp::MDP{S,A} # for conversion/deconversion of actions
 end
-function POMDPs.create_policy( solver::DDPG, mdp::MDP )
+function create_policy( solver::DDPG, mdp::MDP )
     A = actions(mdp)
     return DDPGPolicy(
                     isnull(solver.actor.exec) ? nothing : get(solver.actor.exec),
@@ -224,7 +224,7 @@ function ddpg_update!(solver::DDPG, disc::Real, rng::AbstractRNG, input_idx::Int
 end
 
 
-function solve(solver::DDPG, mdp::MDP, policy::DDPGPolicy=POMDPs.create_policy(solver, mdp), rng::AbstractRNG=RandomDevice())
+function solve(solver::DDPG, mdp::MDP, policy::DDPGPolicy=create_policy(solver, mdp), rng::AbstractRNG=RandomDevice())
 
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if solver.replay_mem == nothing
@@ -242,17 +242,17 @@ function solve(solver::DDPG, mdp::MDP, policy::DDPGPolicy=POMDPs.create_policy(s
     # complete setup for neural ntwork if necessary
     if !solver.actor.valid
         warn("You didn't specify an actor network or your number of output units didn't match the number of actions. Either way, not recommended")
-        fc = mx.FullyConnected(name=:fc_last, num_hidden=dimensions(As), data=solver.actor.arch)
+        fc = mx.FullyConnected(mx.SymbolicNode, name=:fc_last, num_hidden=dimensions(As), data=solver.actor.arch)
         # TODO check this
-        solver.actor.arch = mx.LinearRegressionOutput(name=:output, data=fc, label=mx.Variable(:target))
+        solver.actor.arch = mx.LinearRegressionOutput(mx.SymbolicNode, name=:output, data=fc, label=mx.Variable(:target))
         solver.actor.valid = true
     end
 
     if !solver.critic.valid
          warn("You didn't specify a critic network or your number of output units didn't match the number of actions. Either way, not recommended")
-        fc = mx.FullyConnected(name=:fc_last, num_hidden=1, data=solver.critic.arch)
+        fc = mx.FullyConnected(mx.SymbolicNode, name=:fc_last, num_hidden=1, data=solver.critic.arch)
         # TODO check this
-        solver.critic.arch = mx.LinearRegressionOutput(name=:output, data=fc, label=mx.Variable(:target))
+        solver.critic.arch = mx.LinearRegressionOutput(mx.SymbolicNode, name=:output, data=fc, label=mx.Variable(:target))
         solver.critic.valid = true
 
     end
@@ -329,6 +329,7 @@ function solve(solver::DDPG, mdp::MDP, policy::DDPGPolicy=POMDPs.create_policy(s
                 # update replay memory
                 push!( solver.replay_mem, s_vec, a_vec, r, sp_vec, terminalp, rng=rng)
 
+                td = 0
                 if size( solver.replay_mem ) > solver.actor.batch_size
                 # only update every batch_size steps? or what?
                     td = ddpg_update!( solver,  discount(mdp), rng, critic_input_idx )

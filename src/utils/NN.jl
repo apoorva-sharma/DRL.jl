@@ -63,29 +63,36 @@ end
 
 is_grad_param(s::Symbol) = string(s)[end-5:end] == "weight" || string(s)[end-3:end] == "bias"
 
+function create_action{S,A}(mdp::MDP{S,A})
+    iterator(actions(mdp))[1]
+end
+
 function initialize!(nn::NeuralNetwork, mdp::Union{MDP,mx.AbstractDataProvider}; 
                         copy::Bool=false, 
                         need_input_grad::Bool=false, 
-                        held_out_grads::Bool=falsei,
+                        held_out_grads::Bool=false,
                         copy_output_layer=nothing, # TODO type
-                        output_layer=nothing)
+                        output_layer::Union{Void,mx.SymbolicNode}=nothing)
     # TODO figure out how to handle input_name
     # set up updater function (so states can be maintained)
 
     # turn symbols into actual computational graph with resources via c backend
     req = held_out_grads ? mx.GRAD_WRITE : mx.GRAD_ADD
+    
+    arch = nn.arch
+
     if output_layer != nothing
-        arch = @mx.chain nn.arch => output_layer
+        #arch = @mx.chain nn.arch => output_layer
     end
 
-    input_shape = isa(mdp, MDP) ? (length(vec(mdp,create_state(mdp))),1,) : size(mdp)
+    input_shape = isa(mdp, MDP) ? (length(vec(mdp,initial_state(mdp,RandomDevice()))),1,) : size(mdp)
 
     if need_input_grad
         # TODO fix this to allow for dict input_names
         if isa(nn.input_name,Dict)
             nn.exec = simple_bind2(arch, nn.ctx, grad_req=req; 
-                            nn.input_name[MDPState]=>(length( vec(mdp, create_state(mdp))), 1), 
-                            nn.input_name[MDPAction]=>(length(vec(mdp, create_action(mdp))), 1) )
+                            nn.input_name[MDPState]=>(length( vec(mdp, initial_state(mdp, RandomDevice())) ), 1), 
+                            nn.input_name[MDPAction]=>(length( vec(mdp, create_action(mdp)) ), 1)  )
         else
             nn.exec = simple_bind2(arch, nn.ctx, grad_req=req; nn.input_name=>input_shape )
         end
@@ -93,8 +100,8 @@ function initialize!(nn::NeuralNetwork, mdp::Union{MDP,mx.AbstractDataProvider};
             # TODO copy pasta above
         if isa(nn.input_name,Dict)
             nn.exec = mx.simple_bind(arch, nn.ctx, grad_req=req; 
-                            nn.input_name[MDPState]=>(length( vec(mdp, create_state(mdp))), 1), 
-                            nn.input_name[MDPAction]=>(length(vec(mdp, create_action(mdp))), 1) )
+                            nn.input_name[MDPState]=>(length( vec(mdp, initial_state(mdp, RandomDevice())) ), 1), 
+                            nn.input_name[MDPAction]=>(length(vec(mdp, create_action(mdp))), 1)  )
         else
             nn.exec = mx.simple_bind(arch, nn.ctx, grad_req=req; nn.input_name=>input_shape )
         end
@@ -125,14 +132,16 @@ function initialize!(nn::NeuralNetwork, mdp::Union{MDP,mx.AbstractDataProvider};
 
     if copy
         # TODO there might be some cases where you need the input grad, but I think you only make copies when you have a target network, so no?
+        arch2 = nn.arch
+
         if copy_output_layer != nothing
-            arch2 = @mx.chain nn.arch => copy_output_layer
+            #arch2 = @mx.chain nn.arch => copy_output_layer
         end
 
         # TODO copypasta for dict input
         if isa(nn.input_name,Dict)
             copy_exec = mx.simple_bind(arch2, nn.ctx, grad_req=mx.GRAD_NOP;
-                            nn.input_name[MDPState]=>(length( vec(mdp, create_state(mdp))), 1), 
+                            nn.input_name[MDPState]=>(length( vec(mdp, initial_state(mdp, RandomDevice()))), 1), 
                             nn.input_name[MDPAction]=>(length(vec(mdp, create_action(mdp))), 1) )
         else
             copy_exec = mx.simple_bind(arch2, nn.ctx, grad_req=mx.GRAD_NOP; nn.input_name=>input_shape )

@@ -120,7 +120,7 @@ end
 
 state(mem::UniformMemory, idx::Int) = mem.states[idx:idx]
 action(mem::UniformMemory, idx::Int) = mem.actions[idx:idx]
-
+weight(mem::UniformMemory, idx::Int) = 1
 
 
 # TODO ref paper
@@ -135,6 +135,7 @@ type PrioritizedMemory <: ReplayMemory
     mem_size::Int
     priority_tree::RealVector
     eps::Float64
+    Beta::Float64
 
     write_idx::Int64
 
@@ -158,6 +159,7 @@ function PrioritizedMemory(mdp::MDP;
                         0,
                         zeros(Float64, capacity*2 - 1),
                         0.01,
+                        0.9,
                         1,
                         rng
                         )
@@ -256,4 +258,5 @@ end
 
 state(mem::PrioritizedMemory, idx::Int) = mem.states[idx:idx]
 action(mem::PrioritizedMemory, idx::Int) = mem.actions[idx:idx]
+weight(mem::PrioritizedMemory, idx::Int) = (mem.mem_size*mem.priority_tree[idx+mem.capacity-1])^(-mem.Beta)
 

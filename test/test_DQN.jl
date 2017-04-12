@@ -22,7 +22,7 @@ sim = RolloutSimulator(max_steps=100)
 
 #DQN
 println("Testing with DQN")
-dqn = rl.DQN(max_steps=50, checkpoint_interval=25, num_epochs=4000, target_refresh_interval=250)
+dqn = rl.DQN(max_steps=50, checkpoint_interval=1, num_epochs=10, target_refresh_interval=250)
 dqnpol = rl.solve(dqn, ip)
 # for s in iterator(states(gw))
 #     a = action(pol, s)

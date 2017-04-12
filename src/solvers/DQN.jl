@@ -163,7 +163,7 @@ function action{S,A}(p::EpsilonGreedy, solver::DQN, mdp::MDP{S,A}, s::S, rng::Ab
     # explore, it's here because we need all that extra spaghetti
     if r > p.eps
         rdx = rand(rng, 1:length(As))
-        return (As[rdx], q_values[rdx], rdx, s_vec,)#As[rand(rng, 1:length(As))]
+        return (As[rdx], q_values[rdx], rdx, s_vec,)
     end
 
     p_desc = sortperm( q_values, rev=true)
@@ -189,40 +189,34 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
     # TODO preallocate s, a, r, sp
     td_avg = 0.
 
-    # # nonterminal sp experiences
-    # s_batch = []
-    # a_batch = []
-    # r_batch = []
-    # sp_batch = []
+    s_batch = []
+    a_batch = []
+    r_batch = []
+    sp_batch = []
+    terminalp_batch = []
+    weights = []
 
-    # # terminal sp experiences
-    # s_term = []
-    # a_term = []
-    # r_term = []
-
-    # for idx = 1:nn.batch_size
-    #     s_idx, a_idx, r, sp_idx, terminalp = peek(mem, rng=rng)
-
-    #     if terminalp
-    #         append!(s_batch, mx.expand_dims(state(mem, s_idx), axis=1) )
-    #         append!(sp_batch, mx.expand_dims(state(mem, sp_idx), axis=1) )
-    #         append!(a_batch, a_idx)
-    #         append!(r_batch, r)
-    #     else
-    #         append!(s_batch, mx.expand_dims(state(mem, s_idx), axis=1) )
-    #         append!(a_batch, a_idx)
-    #         append!(r_batch, r)
-    #     end
-    # end
-
-    # # compute values of argmax_ap qp(sp,ap) 
-    # sp_input_batch = mx.concat(sp_batch..., dim=1)
-    # mx.copy!()
-    #println("dqn_update, mem has size $(size(mem))")
-
-
+    # collect batch of samples
     for idx = 1:nn.batch_size
         s_idx, a_idx, r, sp_idx, terminalp = peek(mem, rng=rng)
+        append!(s_batch, s_idx)
+        append!(a_batch, a_idx)
+        append!(r_batch, r)
+        append!(sp_batch, sp_idx)
+        append!(terminalp_batch, terminalp)
+        append!(weights, weight(mem, s_idx))
+    end
+
+    weights = weights/sum(weights)
+
+    for idx = 1:nn.batch_size
+        s_idx = s_batch[idx]
+        a_idx = a_batch[idx]
+        r = r_batch[idx]
+        sp_idx = sp_batch[idx]
+        terminalp = terminalp_batch[idx]
+        weight = weights[idx]
+        
 
         # TODO modify to be more like nature paper (e.g. target network)
         # setup input data accordingly
@@ -264,9 +258,13 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
         # end
         #println("s: $(mx.try_get_shared(state(mem, s_idx))), a: $(a_idx), q:$(qs[a_idx]), qp:$(qp)")
 
-        qs[a_idx] = qp
-        mx.copy!( get(nn.exec).arg_dict[nn.target_name], qs ) 
-        mx.backward( get(nn.exec) )
+        # qs[a_idx] = qp
+
+        qp_vec = copy(qs)
+        qp_vec[a_idx] = qp
+        # compute weighted loss gradient
+        lossGrad = copy(qs - qp_vec, mx.cpu())
+        mx.backward( get(nn.exec), weight*lossGrad )
 
     end
 
@@ -310,7 +308,7 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if isnull(solver.replay_mem)
         # TODO add option to choose what kind of replayer to use
-        solver.replay_mem = UniformMemory(mdp, mem_size=100000) #PrioritizedMemory(mdp,capacity=2048) # 
+        solver.replay_mem = PrioritizedMemory(mdp,capacity=2048) #UniformMemory(mdp, mem_size=100000) # 
     end
 
     # get all actions: this is for my/computational convenience
@@ -321,8 +319,8 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
     # complete setup for neural ntwork if necessary
     if !solver.nn.valid
         warn("You didn't specify a neural network or your number of output units didn't match the number of actions. Either way, not recommended")
-        fc = mx.FullyConnected(mx.SymbolicNode, name=:fc_last, num_hidden=length(As), data=solver.nn.arch)
-        solver.nn.arch = mx.LinearRegressionOutput(mx.SymbolicNode, name=:output, data=fc, label=mx.Variable(:target))
+        solver.nn.arch = mx.FullyConnected(mx.SymbolicNode, name=:output, num_hidden=length(As), data=solver.nn.arch)
+        #solver.nn.arch = mx.LinearRegressionOutput(mx.SymbolicNode, name=:output, data=fc, label=mx.Variable(:target))
         solver.nn.valid = true
     end
 

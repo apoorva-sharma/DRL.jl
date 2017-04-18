@@ -81,17 +81,13 @@ end
 
 
 # TODO make this more standard
-function scale(s_vec)
-    return s_vec./[10000,10000,100,1,1]
-end
-
-function unscale(s_vec)
-    return s_vec.*[10000,10000,100,1,1]
-end
+# function scale(s_vec)
+#     return s_vec./[10000,10000,100,1,1]
+# end
 
 function util{S,A}(p::DQNPolicy{S,A}, s::S)
     # move to computational graph -- potential bottleneck?
-    s_vec = scale(vec(p.mdp, s))
+    s_vec = vec(p.mdp, s)
     mx.copy!(p.exec.arg_dict[p.input_name], convert(Array{Float32,2}, reshape(s_vec, length(s_vec), 1) ) )
 
     mx.forward( p.exec )
@@ -119,7 +115,7 @@ function POMDPs.action{S,A}(p::DQNPolicy{S,A}, s::S)
     # assuming that s is of the right type and stuff, means one less handle
 
     # move to computational graph -- potential bottleneck?
-    s_vec = scale(vec(p.mdp, s))
+    s_vec = vec(p.mdp, s)
     mx.copy!(p.exec.arg_dict[p.input_name], convert(Array{Float32,2}, reshape(s_vec, length(s_vec), 1) ) )
 
     mx.forward( p.exec )
@@ -149,7 +145,7 @@ end
 function action{S,A}(p::EpsilonGreedy, solver::DQN, mdp::MDP{S,A}, s::S, rng::AbstractRNG, As_all::Vector{A}, a::A=As_all[1])
 
     # move to computational graph -- potential bottleneck?
-    s_vec = convert(Vector{Float32}, scale(vec(mdp, s)) )
+    s_vec = convert(Vector{Float32}, vec(mdp, s) )
     mx.copy!(get(solver.nn.exec).arg_dict[solver.nn.input_name], reshape(s_vec, length(s_vec), 1) )
 
     mx.forward( get(solver.nn.exec) )
@@ -207,7 +203,8 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
         append!(weights, weight(mem, s_idx))
     end
 
-    weights = weights/sum(weights)
+    # normalize weights
+    weights = weights/maximum(weights)
 
     for idx = 1:nn.batch_size
         s_idx = s_batch[idx]
@@ -218,18 +215,19 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
         weight = weights[idx]
         
 
-        # TODO modify to be more like nature paper (e.g. target network)
         # setup input data accordingly
         # TODO abstract out to kDim input
         mx.copy!( target_nn.arg_dict[nn.input_name], state(mem, sp_idx) )
         mx.copy!( get(nn.exec).arg_dict[nn.input_name], state(mem, sp_idx) )
 
-        # get target
+        # get target q values
         # TODO need discount/mdp
         mx.forward( target_nn )
         mx.forward( get(nn.exec) )
         qps = vec(copy!(zeros(Float32,size( get(nn.exec).outputs[1] ) ), get(nn.exec).outputs[1]))
         qps_target = vec(copy!(zeros(Float32,size( target_nn.outputs[1] ) ), target_nn.outputs[1]))
+        
+        # using the Double DQN algorithm:
         _ , ap_idx = findmax(qps) 
         if terminalp
             qp = r
@@ -242,54 +240,21 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
         mx.forward( get(nn.exec), is_train=true )
         qs = copy!( zeros(Float32, size(get(nn.exec).outputs[1])), get(nn.exec).outputs[1])
 
-        # if isnan(qs[a_idx])
-        #     warn("ah shit qs")
-        #     display(state(mem, s_idx))
-        #     error("abort now")
-        # end
-        # if isnan(qp)
-        #     warn("ah shit qp")
-        # end
-
         td_avg += (qp - qs[a_idx])^2
 
-        # if !(isnan(td_avg))
-        #     warn("all good")
-        # end
-        #println("s: $(mx.try_get_shared(state(mem, s_idx))), a: $(a_idx), q:$(qs[a_idx]), qp:$(qp)")
-
-        # qs[a_idx] = qp
+        # compute loss gradient
+        # grad_vec = zeros(qs)
+        # grad_vec[a_idx] = qs[a_idx]-qp
+        # lossGrad = copy(grad_vec, mx.cpu())
 
         qp_vec = copy(qs)
         qp_vec[a_idx] = qp
         # compute weighted loss gradient
         lossGrad = copy(qs - qp_vec, mx.cpu())
         mx.backward( get(nn.exec), weight*lossGrad )
-
     end
 
-    #println("updating weights")
     update!(nn)
-
-
-
-    #= keep until debug shows above works
-    # perform update on network
-    for (idx, (param, grad)) in enumerate( zip( get(nn.exec).arg_arrays, get(nn.exec).grad_arrays ) )
-        if grad == nothing
-            continue
-        end
-        nn.updater( idx, grad, param )
-    end
-    
-    # clear gradients    
-    for grad in get(nn.exec).grad_arrays
-        if grad == nothing
-            continue
-        end
-        grad[:] = 0
-    end
-    =#
 
     # update target network
     if refresh_target
@@ -314,13 +279,10 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
     # get all actions: this is for my/computational convenience
     As = POMDPs.iterator(actions(mdp))
 
-    # TODO check size of output layer -- if bad, chop off end and set nn to invalid 
-
-    # complete setup for neural ntwork if necessary
+    # complete setup for neural network if necessary (This is most often the case)
     if !solver.nn.valid
         warn("You didn't specify a neural network or your number of output units didn't match the number of actions. Either way, not recommended")
         solver.nn.arch = mx.FullyConnected(mx.SymbolicNode, name=:output, num_hidden=length(As), data=solver.nn.arch)
-        #solver.nn.arch = mx.LinearRegressionOutput(mx.SymbolicNode, name=:output, data=fc, label=mx.Variable(:target))
         solver.nn.valid = true
     end
 
@@ -341,11 +303,11 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
     for ep = 1:solver.num_epochs
 
         s = initial_state(mdp, rng)
-        (a, q, a_idx, s_vec,) = action(solver.exp_pol, solver, mdp, s, rng, As) # BoundsError indexed_next (tuple.jl) -- wtf TODO
+
+        (a, q, a_idx, s_vec,) = action(solver.exp_pol, solver, mdp, s, rng, As)
         terminal = isterminal(mdp, s)
 
-
-        disc = 1.0
+        disc = 1.0 # what discount to use for the total reward statistics
         r_total = 0.0
 
 
@@ -375,8 +337,6 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
                     refresh_target = mod(ctr, solver.target_refresh_interval) == 0
                     td = dqn_update!( solver.nn, get(solver.target_nn), get(solver.replay_mem), refresh_target, discount(mdp), rng )
 
-                    # TODO target network update
-
                     td_avg += td
                 end
 
@@ -404,6 +364,7 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
             end
         end
 
+
         # update metrics
         solver.stats["td"][ep] = td_avg
         solver.stats["r_total"][ep] = r_total
@@ -420,13 +381,9 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
                 "\n\tTotal Reward: ", mean(solver.stats["r_total"][ep-solver.checkpoint_interval+1:ep]),"\n")
 
         end
-        #return r_total
 
     end
 
-    # return policy
-    # TODO update policy.exec more frequently
-    # TODO make new exec that doesn't need to train
     policy.exec = get(solver.nn.exec)
     return policy
 

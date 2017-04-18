@@ -39,9 +39,6 @@ function NeuralNetwork(
         info("You're running the neural network on cpu--it would be faster to run on GPU (or in parallel mode, but that's not supported)")
     end
 
-    #info("Setting up MXNet Architecture with:") #... to finish later maybe
-    # TODO check if network has a LinearRegressionOutput
-
     # TODO check if opt has an OptimizationState
     if !isdefined(opt, :state)
         opt.state = mx.OptimizationState(batch_size)
@@ -82,7 +79,7 @@ function initialize!(nn::NeuralNetwork, mdp::Union{MDP,mx.AbstractDataProvider};
     arch = nn.arch
 
     if output_layer != nothing
-        #arch = @mx.chain nn.arch => output_layer
+        #arch = @mx.chain nn.arch => output_layer # (LoadError when this is uncommented)
     end
 
     input_shape = isa(mdp, MDP) ? (length(vec(mdp,initial_state(mdp,RandomDevice()))),1,) : size(mdp)
@@ -97,7 +94,6 @@ function initialize!(nn::NeuralNetwork, mdp::Union{MDP,mx.AbstractDataProvider};
             nn.exec = simple_bind2(arch, nn.ctx, grad_req=req; nn.input_name=>input_shape )
         end
     else
-            # TODO copy pasta above
         if isa(nn.input_name,Dict)
             nn.exec = mx.simple_bind(arch, nn.ctx, grad_req=req; 
                             nn.input_name[MDPState]=>(length( vec(mdp, initial_state(mdp, RandomDevice())) ), 1), 
@@ -161,7 +157,7 @@ end
 
 
 function build_partial_mlp(inputs::Union{Symbol,Dict{MDPInput,Symbol}}=:data)
-    # TODO there's an issue wit hthis
+    # TODO there's an issue wit this
     if isa(inputs, Dict)
         input_sym = [mx.Variable(input) for input in values(inputs)]
         input = mx.Concat(input_sym...)

@@ -12,7 +12,6 @@ iterator(ipa::POMDPModels.InvertedPendulumActions) = ipa.actions
 
 ip = InvertedPendulum()
 gw = GridWorld(sx=20,sy=1,rs=[GridWorldState(3,1)],rv=[5.],penalty=-10.0, tp=1.0)
-#gw = GridWorld()
 mc = MountainCar()
 
 iterator(mca::POMDPModels.MountainCarActions) = mca.actions
@@ -22,7 +21,7 @@ sim = RolloutSimulator(max_steps=100)
 
 #DQN
 println("Testing with DQN")
-dqn = rl.DQN(max_steps=50, checkpoint_interval=1, num_epochs=10, target_refresh_interval=250)
+dqn = rl.DQN(max_steps=50, checkpoint_interval=25, num_epochs=500, target_refresh_interval=250)
 dqnpol = rl.solve(dqn, ip)
 # for s in iterator(states(gw))
 #     a = action(pol, s)

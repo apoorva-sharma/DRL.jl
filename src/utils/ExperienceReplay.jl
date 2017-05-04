@@ -18,6 +18,7 @@ type UniformMemory <: ReplayMemory
     actions::Union{Vector{Int},mx.NDArray} # which action was taken
     rewards::RealVector
     terminals::Vector{Bool}
+    weights::RealVector
     mem_size::Int
     vectorized_actions::Bool
     rng::Nullable{AbstractRNG}
@@ -47,6 +48,7 @@ function UniformMemory(mdp::MDP;
                         acts,
                         zeros(mem_size),
                         falses(mem_size),
+                        ones(mem_size),
                         0,
                         vectorized_actions,
                         rng
@@ -60,6 +62,7 @@ function push!(mem::UniformMemory,
                 sp_vec::RealVector,
                 terminalp::Bool=false,
                 td::Real=1.;
+                weight=1.,
                 rng::Union{Void,AbstractRNG}=nothing )
     if mem.mem_size * 2 > size(mem.states, 2)
         error("Oh shoot something messed up here")
@@ -82,6 +85,7 @@ function push!(mem::UniformMemory,
         end
         mem.rewards[replace_idx] = r
         mem.terminals[replace_idx] = terminalp
+        mem.weights[replace_idx] = weight
 
         mem.states[replace_idx:replace_idx] = reshape(s_vec, length(s_vec), 1)
         idx2 = replace_idx + mem.mem_size
@@ -100,6 +104,7 @@ function push!(mem::UniformMemory,
     end
     mem.rewards[mem.mem_size] = r
     mem.terminals[mem.mem_size] = terminalp
+    mem.weights[mem.mem_size] = weight
 
     mem.states[mem.mem_size:mem.mem_size] = reshape(s_vec, length(s_vec), 1)
     idx2 = mem.mem_size + convert(Int, size(mem.states, 2)/2)
@@ -120,17 +125,21 @@ end
 
 state(mem::UniformMemory, idx::Int) = mem.states[idx:idx]
 action(mem::UniformMemory, idx::Int) = mem.actions[idx:idx]
-weight(mem::UniformMemory, idx::Int) = 1
+weight(mem::UniformMemory, idx::Int) = mem.weights[idx]
 
 
-# TODO ref paper
-# TODO add a bunch of stuff that is consistent with UniformMemory
+
+
+
+
+
 type PrioritizedMemory <: ReplayMemory
     capacity::Int
     states::mx.NDArray # giant NDArray for speed--probably not too much fatter in memory
     actions::Vector{Int} # which action was taken
     rewards::RealVector
     terminals::Vector{Bool}
+    weights::RealVector
 
     mem_size::Int
     priority_tree::RealVector
@@ -156,6 +165,7 @@ function PrioritizedMemory(mdp::MDP;
                         zeros(Int, capacity),
                         zeros(capacity),
                         falses(capacity),
+                        ones(capacity),
                         0,
                         zeros(Float64, capacity*2 - 1),
                         0.01,
@@ -212,6 +222,7 @@ function push!(mem::PrioritizedMemory,
                sp_vec::RealVector,
                terminalp::Bool=false,
                td::Real=1.;
+               weight::Real=1.,
                rng::Union{Void,AbstractRNG}=nothing)
     tree_idx = mem.write_idx + (mem.capacity - 1)
 
@@ -219,6 +230,7 @@ function push!(mem::PrioritizedMemory,
     mem.actions[mem.write_idx] = a
     mem.rewards[mem.write_idx] = r
     mem.terminals[mem.write_idx] = terminalp
+    mem.weights[mem.write_idx] = weight
 
     mem.states[mem.write_idx:mem.write_idx] = reshape(s_vec, length(s_vec), 1)
     
@@ -258,5 +270,5 @@ end
 
 state(mem::PrioritizedMemory, idx::Int) = mem.states[idx:idx]
 action(mem::PrioritizedMemory, idx::Int) = mem.actions[idx:idx]
-weight(mem::PrioritizedMemory, idx::Int) = (mem.mem_size*mem.priority_tree[idx+mem.capacity-1])^(-mem.Beta)
+weight(mem::PrioritizedMemory, idx::Int) = mem.weights[idx]*(mem.mem_size*mem.priority_tree[idx+mem.capacity-1])^(-mem.Beta)
 

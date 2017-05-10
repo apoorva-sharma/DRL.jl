@@ -272,7 +272,7 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if isnull(solver.replay_mem)
         # TODO add option to choose what kind of replayer to use
-        solver.replay_mem = PrioritizedMemory(mdp,capacity=2048) # UniformMemory(mdp, mem_size=2048) #
+        solver.replay_mem = PrioritizedMemory(mdp,capacity=2048) #UniformMemory(mdp, mem_size=2048) # 
     end
 
 
@@ -309,14 +309,14 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
             s0 = initial_state(mdp, rng)
             w_s0 =  1.0
         else
-            # if rand(rng) > 0.2
+            if rand(rng) > 0.2
                 s0 = initial_state(mdp, MixtureModel(get(s0_dist)), rng)
                 s0_vec = vec(mdp, s0)
                 w_s0 = 1.0 #( Distributions.pdf(MixtureModel(get(s0_dist)), s0_vec) + 0.001 )^(-1)
-            # else
-            #     s0 = initial_state(mdp, rng)
-            #     w_s0 = 1.0
-            # end
+            else
+                 s0 = initial_state(mdp, rng)
+                 w_s0 = 1.0
+            end
         end
         (s0,w_s0)
     end

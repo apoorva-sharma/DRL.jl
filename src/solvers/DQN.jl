@@ -270,6 +270,8 @@ end
 
 function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(solver, mdp), rng::AbstractRNG=RandomDevice())
 
+    sim = RolloutSimulator(max_steps=solver.max_steps)
+
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if isnull(solver.replay_mem)
         # TODO add option to choose what kind of replayer to use
@@ -380,6 +382,13 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
                 "\n\tTD: ", mean(solver.stats["td"][ep-solver.checkpoint_interval+1:ep]), 
                 "\n\tTotal Reward: ", mean(solver.stats["r_total"][ep-solver.checkpoint_interval+1:ep]),"\n")
 
+            # run learned policy for feedback
+            r_total = 0
+            N_sim = 100
+            for i in 1:N_sim
+                r_total += simulate(sim, mdp, policy, initial_state(mdp, rng))
+            end
+            println("\tAvg total reward: $(r_total/N_sim)")
         end
 
     end

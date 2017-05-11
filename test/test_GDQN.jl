@@ -55,6 +55,9 @@ for i in 1:N_sim
 end
 println("Avg total reward $(r_total/N_sim)")
 
+df = DataFrame(gdqn.stats);
+writetable("testGDQN.csv", df);
+
 # println("Testing with DVI")
 # dvi = ValueIterationSolver()
 # dvipol = solve(dvi,gw,verbose=true)

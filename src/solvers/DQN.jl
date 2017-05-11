@@ -33,7 +33,8 @@ function DQN(;
             stats::Dict{AbstractString,Vector{Real}}=
                     Dict{AbstractString,Vector{Real}}(
                             "r_total"=>zeros(num_epochs),
-                            "td"=>zeros(num_epochs)),
+                            "td"=>zeros(num_epochs),
+                            "r_test"=>zeros(num_epochs)),
             replay_mem::Nullable{ReplayMemory}=Nullable{ReplayMemory}(),
             capture_exception::Bool=false,
             target_refresh_interval::Int=10000
@@ -109,7 +110,7 @@ function util{S,A}(p::DQNPolicy{S,A}, s::S)
     end
 end
 
-function POMDPs.action{S,A}(p::DQNPolicy{S,A}, s::S) 
+function POMDPs.action{S,A}(p::DQNPolicy{S,A}, s::S)
     # TODO figure out if its better to have a reference to the mdp
 
     # assuming that s is of the right type and stuff, means one less handle
@@ -135,7 +136,7 @@ function POMDPs.action{S,A}(p::DQNPolicy{S,A}, s::S)
             return a
         end
     end
-    
+
     error("Check your actions(mdp, s) function; no legal actions available from state $s")
 
 end
@@ -172,7 +173,7 @@ function action{S,A}(p::EpsilonGreedy, solver::DQN, mdp::MDP{S,A}, s::S, rng::Ab
             return (a, q, idx, s_vec,)
         end
     end
-    
+
     error("Check your actions(mdp, s) function; no legal actions available from state $s")
 
 end
@@ -213,7 +214,7 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
         sp_idx = sp_batch[idx]
         terminalp = terminalp_batch[idx]
         weight = weights[idx]
-        
+
 
         # setup input data accordingly
         # TODO abstract out to kDim input
@@ -226,9 +227,9 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
         mx.forward( get(nn.exec) )
         qps = vec(copy!(zeros(Float32,size( get(nn.exec).outputs[1] ) ), get(nn.exec).outputs[1]))
         qps_target = vec(copy!(zeros(Float32,size( target_nn.outputs[1] ) ), target_nn.outputs[1]))
-        
+
         # using the Double DQN algorithm:
-        _ , ap_idx = findmax(qps) 
+        _ , ap_idx = findmax(qps)
         if terminalp
             qp = r
         else
@@ -275,7 +276,7 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if isnull(solver.replay_mem)
         # TODO add option to choose what kind of replayer to use
-        solver.replay_mem = PrioritizedMemory(mdp,capacity=2048) #UniformMemory(mdp, mem_size=100000) # 
+        solver.replay_mem = PrioritizedMemory(mdp,capacity=2048) #UniformMemory(mdp, mem_size=100000) #
     end
 
     # get all actions: this is for my/computational convenience
@@ -373,13 +374,13 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
 
         # print metrics
         if mod(ep, solver.checkpoint_interval) == 0
-    
+            policy.exec = get(solver.nn.exec)
             # save model
             # TODO
 
             # print relevant metrics
-            print("Epoch ", ep, 
-                "\n\tTD: ", mean(solver.stats["td"][ep-solver.checkpoint_interval+1:ep]), 
+            print("Epoch ", ep,
+                "\n\tTD: ", mean(solver.stats["td"][ep-solver.checkpoint_interval+1:ep]),
                 "\n\tTotal Reward: ", mean(solver.stats["r_total"][ep-solver.checkpoint_interval+1:ep]),"\n")
 
             # run learned policy for feedback
@@ -389,6 +390,7 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
                 r_total += simulate(sim, mdp, policy, initial_state(mdp, rng))
             end
             println("\tAvg total reward: $(r_total/N_sim)")
+            solver.stats["r_test"][ep-solver.checkpoint_interval+1:ep] = r_total/N_sim;
         end
 
     end
@@ -397,5 +399,3 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
     return policy
 
 end
-
-

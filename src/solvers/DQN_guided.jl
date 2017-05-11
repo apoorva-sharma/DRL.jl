@@ -35,7 +35,8 @@ function GDQN(;
             stats::Dict{AbstractString,Vector{Real}}=
                     Dict{AbstractString,Vector{Real}}(
                             "r_total"=>zeros(num_epochs),
-                            "td"=>zeros(num_epochs)),
+                            "td"=>zeros(num_epochs),
+                            "r_test"=>zeros(num_epochs)),
             replay_mem::Nullable{ReplayMemory}=Nullable{ReplayMemory}(),
             capture_exception::Bool=false,
             target_refresh_interval::Int=10000
@@ -272,7 +273,7 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if isnull(solver.replay_mem)
         # TODO add option to choose what kind of replayer to use
-        solver.replay_mem = PrioritizedMemory(mdp,capacity=2048) #UniformMemory(mdp, mem_size=2048) # 
+        solver.replay_mem = PrioritizedMemory(mdp,capacity=2048) #UniformMemory(mdp, mem_size=2048) #
     end
 
 
@@ -432,6 +433,7 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
                 r_total += simulate(sim, mdp, policy, initial_state(mdp, rng))
             end
             println("\tAvg total reward: $(r_total/N_sim)")
+            solver.stats["r_test"][ep] = r_total/N_sim;
 
         end
         #return r_total

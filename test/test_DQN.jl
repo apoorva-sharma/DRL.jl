@@ -5,6 +5,7 @@ using GraphViz
 using MXNet
 using DiscreteValueIteration
 using POMDPToolbox
+using DataFrames
 
 # stuff to make things work
 importall POMDPs
@@ -33,6 +34,10 @@ for i in 1:N_sim
     r_total += simulate(sim, ip, dqnpol, initial_state(ip, RandomDevice()))
 end
 println("Avg total reward $(r_total/N_sim)")
+
+df = DataFrame(dqn.stats);
+writetable("testDQN.csv", df);
+
 
 # println("Testing with DVI")
 # dvi = ValueIterationSolver()

@@ -265,10 +265,37 @@ function gdqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMem
 
 end
 
+function addGDQNstats(solver::GDQN, s0_dist::GMM)
+  n = s0_dist.n
+  d = s0_dist.d
+  for i in 1:n
+    solver.stats["alpha$(i)"] = zeros(solver.num_epochs)
+    for j in 1:d
+      solver.stats["mu$(i)_$(j)"] = zeros(solver.num_epochs)
+      solver.stats["sigma$(i)_$(j)$(j)"] = zeros(solver.num_epochs)
+    end
+  end
+end
+
+function logGDQNstats(solver::GDQN, s0_dist::GMM, ep)
+  n = s0_dist.n
+  d = s0_dist.d
+  for i in 1:n
+    solver.stats["alpha$(i)"][ep] = s0_dist.α[i]
+    for j in 1:d
+      solver.stats["mu$(i)_$(j)"][ep] = s0_dist.μ[i][j]
+      solver.stats["sigma$(i)_$(j)$(j)"][ep] = s0_dist.Σ[i].mat[j,j]
+    end
+  end
+end
+
 function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_policy(solver, mdp), s0_dist::Nullable{GMM}=nothing, rng::AbstractRNG=RandomDevice())
 
     sim = RolloutSimulator(max_steps=solver.max_steps)
 
+    if !isnull(s0_dist)
+        addGDQNstats(solver, get(s0_dist))
+    end
 
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if isnull(solver.replay_mem)
@@ -433,8 +460,11 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
                 r_total += simulate(sim, mdp, policy, initial_state(mdp, rng))
             end
             println("\tAvg total reward: $(r_total/N_sim)")
-            solver.stats["r_test"][ep] = r_total/N_sim;
-
+            ep_range = ep-solver.checkpoint_interval+1:ep
+            solver.stats["r_test"][ep_range] = r_total/N_sim;
+            if !isnull(s0_dist)
+                logGDQNstats(solver, get(s0_dist), ep_range)
+            end
         end
         #return r_total
 

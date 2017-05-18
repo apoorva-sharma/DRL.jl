@@ -156,7 +156,7 @@ function initialize!(nn::NeuralNetwork, mdp::Union{MDP,mx.AbstractDataProvider};
 end
 
 
-function build_partial_mlp(inputs::Union{Symbol,Dict{MDPInput,Symbol}}=:data)
+function build_partial_mlp(inputs::Union{Symbol,Dict{MDPInput,Symbol}}=:data; ctx=mx.cpu())
     # TODO there's an issue wit this
     if isa(inputs, Dict)
         input_sym = [mx.Variable(input) for input in values(inputs)]
@@ -166,7 +166,7 @@ function build_partial_mlp(inputs::Union{Symbol,Dict{MDPInput,Symbol}}=:data)
     end
     arch = @mx.chain input =>
                    mx.MLP([128, 64])
-    return NeuralNetwork(arch, valid=false, input_name=inputs)
+    return NeuralNetwork(arch, ctx=ctx, valid=false, input_name=inputs)
 end
 
 

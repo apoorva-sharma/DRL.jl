@@ -23,7 +23,7 @@ type DQN <: POMDPs.Solver
     backtrace::Nullable{Any}
 end
 function DQN(;
-            nn::NeuralNetwork=build_partial_mlp(),
+            nn::NeuralNetwork=build_partial_mlp(ctx=mx.cpu()),
             target_nn::Nullable{mx.Executor}=Nullable{mx.Executor}(),
             exp_pol::ExplorationPolicy=EpsilonGreedy(),
             max_steps::Int=100,
@@ -251,7 +251,7 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
         qp_vec = copy(qs)
         qp_vec[a_idx] = qp
         # compute weighted loss gradient
-        lossGrad = copy(qs - qp_vec, mx.cpu())
+        lossGrad = copy(qs - qp_vec, nn.ctx )
         mx.backward( get(nn.exec), weight*lossGrad )
     end
 

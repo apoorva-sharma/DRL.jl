@@ -291,12 +291,18 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
 
     # setup policy if neccessary
     if isnull(solver.nn.exec)
-        warn("target_nn is just a copy!!")
         if isnull(solver.target_nn)
             solver.target_nn = initialize!(solver.nn, mdp, copy=true)
         else
             initialize!(solver.nn, mdp)
         end
+    end
+
+    output_bias = get(solver.nn.exec).arg_dict[:output_bias]
+    @mx.nd_as_jl rw=output_bias begin
+      output_bias[:] = -1
+      output_bias[1] = 0
+      println("output_bias is $(output_bias)")
     end
 
     terminalp = false

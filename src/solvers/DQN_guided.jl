@@ -317,7 +317,6 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
 
     # setup policy if neccessary
     if isnull(solver.nn.exec)
-        warn("target_nn is just a copy!!")
         if isnull(solver.target_nn)
             solver.target_nn = initialize!(solver.nn, mdp, copy=true)
         else
@@ -325,11 +324,24 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
         end
     end
 
+    # Bias to a particular action
+    output_bias = get(solver.nn.exec).arg_dict[:output_bias]
+    @mx.nd_as_jl rw=output_bias begin
+      output_bias[:] = -1
+      output_bias[1] = 0
+      println("output_bias is $(output_bias)")
+    end
+
     # set up initial_state score tables
     s0_sample_size = 100
     s_dim = size(vec(mdp,initial_state(mdp, rng)))
     s0_set = Vector{Vector{Float64}}(s0_sample_size)
     s0_weight_set = zeros(Float64, s0_sample_size)
+
+    # CSLV SPECIFIC TODO REMOVE
+    solver.stats["s0x"] = zeros(solver.num_epochs)
+    solver.stats["s0y"] = zeros(solver.num_epochs)
+    solver.stats["s0h"] = zeros(solver.num_epochs)
 
     # set up sampling distribution
     function sample_s0()
@@ -422,7 +434,7 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
 
         idx = mod(ep-1, s0_sample_size) + 1
         s0_set[idx] = copy(vec(mdp,s0))
-        s0_weight_set[idx] = 1.0 #abs(td_s0) / step
+        s0_weight_set[idx] = abs(td_s0) / step #(mean td over episode)
 
         if !isnull(s0_dist)
             # fit initial state distribution to the new stats
@@ -440,6 +452,11 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
         # update metrics
         solver.stats["td"][ep] = td_avg
         solver.stats["r_total"][ep] = r_total
+
+        #CSLV SPECIFIC (TODO REMOVE)
+        solver.stats["s0x"][ep] = s0_set[idx][1]
+        solver.stats["s0y"][ep] = s0_set[idx][2]
+        solver.stats["s0h"][ep] = s0_set[idx][3]
 
         # checkpoint stuff
         if mod(ep, solver.checkpoint_interval) == 0

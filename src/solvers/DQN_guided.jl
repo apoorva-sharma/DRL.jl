@@ -300,7 +300,7 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if isnull(solver.replay_mem)
         # TODO add option to choose what kind of replayer to use
-        solver.replay_mem = PrioritizedMemory(mdp,capacity=2048) #UniformMemory(mdp, mem_size=2048) #
+        solver.replay_mem = UniformMemory(mdp, mem_size=8192) #PrioritizedMemory(mdp,capacity=8192) #
     end
 
 
@@ -325,15 +325,15 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
     end
 
     # Bias to a particular action
-    output_bias = get(solver.nn.exec).arg_dict[:output_bias]
-    @mx.nd_as_jl rw=output_bias begin
-      output_bias[:] = -1
-      output_bias[1] = 0
-      println("output_bias is $(output_bias)")
-    end
+    # output_bias = get(solver.nn.exec).arg_dict[:output_bias]
+    # @mx.nd_as_jl rw=output_bias begin
+    #   output_bias[:] = -1
+    #   output_bias[1] = 0
+    #   println("output_bias is $(output_bias)")
+    # end
 
     # set up initial_state score tables
-    s0_sample_size = 100
+    s0_sample_size = 200
     s_dim = size(vec(mdp,initial_state(mdp, rng)))
     s0_set = Vector{Vector{Float64}}(s0_sample_size)
     s0_weight_set = zeros(Float64, s0_sample_size)
@@ -369,7 +369,7 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
 
         s0, w_s0 = sample_s0()
         s = s0
-        td_s0 = 1.0 # count total td from s0
+        td_s0 = 0. # count total td from s0
 
         (a, q, a_idx, s_vec,) = action(solver.exp_pol, solver, mdp, s, rng, As)
         terminal = isterminal(mdp, s)
@@ -391,7 +391,7 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
 
                 # 1-step TD error just in case you care (e.g. prioritized experience replay)
                 _td = r + discount(mdp) * qp - q
-                td_s0 += _td
+                td_s0 += abs(_td)
 
                 # terminality condition for easy access later (possibly expensive fn)
                 terminalp = isterminal(mdp, sp)
@@ -434,7 +434,7 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
 
         idx = mod(ep-1, s0_sample_size) + 1
         s0_set[idx] = copy(vec(mdp,s0))
-        s0_weight_set[idx] = abs(td_s0) / step #(mean td over episode)
+        s0_weight_set[idx] = td_s0 / step #(mean td over episode)
 
         if !isnull(s0_dist)
             # fit initial state distribution to the new stats

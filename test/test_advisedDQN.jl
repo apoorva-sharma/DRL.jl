@@ -9,20 +9,38 @@ using DataFrames
 
 # stuff to make things work
 importall POMDPs
-iterator(ipa::POMDPModels.InvertedPendulumActions) = ipa.actions
 
-ip = InvertedPendulum()
 gw = GridWorld(); #GridWorld(sx=20,sy=1,rs=[GridWorldState(3,1)],rv=[5.],penalty=-10.0, tp=1.0)
-mc = MountainCar()
-
-iterator(mca::POMDPModels.MountainCarActions) = mca.actions
-
-
 sim = RolloutSimulator(max_steps=100)
 
+println("Solving with DVI")
+dvi = ValueIterationSolver()
+dvipol = solve(dvi,gw,verbose=true)
+
+function vec(s::GridWorldState)
+    if s.done
+        return [0,0]
+    else
+        return POMDPs.vec(gw, s)
+    end
+end
+
+function unvec(mdp::GridWorld, svec::Vector)
+    x = round(svec[1]*mdp.size_x)
+    y = round(svec[1]*mdp.size_y)
+    done = (x == 0 && y == 0)
+    GridWorldState(x, y, done)
+end
+
+
+function qhat(s)
+    s_idx = state_index(gw, unvec(gw, s))
+    q_vec = dvipol.qmat[s_idx,:]
+end
+
 #DQN
-println("Testing with DQN")
-dqn = rl.DQN(max_steps=50, checkpoint_interval=25, num_epochs=750, target_refresh_interval=100)
+println("Solving with DQN, seeded with DVI Policy")
+dqn = rl.DQN(max_steps=50, checkpoint_interval=25, num_epochs=500, target_refresh_interval=100, q_hat=Nullable{Function}(qhat), q_hat_bias=0.05)
 dqnpol = rl.solve(dqn, gw)
 for s in iterator(states(gw))
     a = action(dqnpol, s)
@@ -36,16 +54,7 @@ end
 println("Avg total reward $(r_total/N_sim)")
 
 df = DataFrame(dqn.stats);
-writetable("testDQN.csv", df);
-
-
-println("Testing with DVI")
-dvi = ValueIterationSolver()
-dvipol = solve(dvi,gw,verbose=true)
-# for s in iterator(states(gw))
-#     a = action(pol, s)
-#     println("state $(s.x), action $(a)")
-# end
+writetable("testDQNadvised.csv", df);
 
 r_total = 0
 N_sim = 50

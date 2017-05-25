@@ -165,7 +165,7 @@ function build_partial_mlp(inputs::Union{Symbol,Dict{MDPInput,Symbol}}=:data; ct
         input = mx.Variable(inputs)
     end
     arch = @mx.chain input =>
-                   mx.MLP([128, 64])
+                   mx.MLP([128, 128, 128])
     return NeuralNetwork(arch, ctx=ctx, valid=false, input_name=inputs)
 end
 

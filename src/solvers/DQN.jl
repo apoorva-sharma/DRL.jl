@@ -17,6 +17,10 @@ type DQN <: POMDPs.Solver
     replay_mem::Nullable{ReplayMemory}
     target_refresh_interval::Int
 
+    # stuff for if we have an estimate of the true q function
+    q_hat::Nullable{Function} # should take state, output vector of q values of each action
+    q_hat_bias::Real
+
     # exception stuff from History Recorder -- couldn't hurt
     capture_exception::Bool
     exception::Nullable{Exception}
@@ -36,6 +40,8 @@ function DQN(;
                             "td"=>zeros(num_epochs),
                             "r_test"=>zeros(num_epochs)),
             replay_mem::Nullable{ReplayMemory}=Nullable{ReplayMemory}(),
+            q_hat::Nullable{Function}=Nullable{Function}(),
+            q_hat_bias::Real=1.,
             capture_exception::Bool=false,
             target_refresh_interval::Int=10000
             )
@@ -53,6 +59,8 @@ function DQN(;
                 stats,
                 replay_mem,
                 target_refresh_interval,
+                q_hat,
+                q_hat_bias,
                 capture_exception,
                 nothing,
                 nothing
@@ -179,7 +187,35 @@ function action{S,A}(p::EpsilonGreedy, solver::DQN, mdp::MDP{S,A}, s::S, rng::Ab
 end
 
 
-function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemory, refresh_target::Bool, disc::Float64, rng::AbstractRNG )
+function pretrain( nn::NeuralNetwork, mdp, q_hat, rng)
+  N = n_states(mdp)
+  ss = states(mdp)
+  n_batches = 4000
+  batch_size = 64
+  for i = 1:n_batches
+    l2_error = 0.
+    for j = 1:batch_size
+      s_idx = rand(rng, 1:N)
+      s_vec = vec(mdp, ss[s_idx])
+      # setup target, do forward, backward pass to get gradient
+      mx.copy!( get(nn.exec).arg_dict[nn.input_name], s_vec )
+      mx.forward( get(nn.exec), is_train=true )
+      qs = copy!( zeros(Float32, size(get(nn.exec).outputs[1])), get(nn.exec).outputs[1])
+
+      qp = q_hat(s_vec)
+      lossGrad = qs - reshape(qp, size(qs))
+      l2_error += sum(lossGrad.^2)
+
+      mx.backward( get(nn.exec), copy(lossGrad, nn.ctx) )
+    end
+    if mod(i, 25) == 0
+      println(" batch $(i):\tl2 error: $(l2_error/batch_size)")
+    end
+    update!(nn)
+  end
+end
+
+function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemory, refresh_target::Bool, disc::Float64, q_hat, q_hat_bias, rng::AbstractRNG )
 
     # NOTE its probably more efficient to have a network setup for batch passes, and one for the individual passes (e.g. action(...)), depends on memory, I guess
 
@@ -250,9 +286,22 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
 
         qp_vec = copy(qs)
         qp_vec[a_idx] = qp
+
+
         # compute weighted loss gradient
-        lossGrad = copy(qs - qp_vec, nn.ctx )
-        mx.backward( get(nn.exec), weight*lossGrad )
+        lossGrad = weight*(qs - qp_vec)
+
+        if !isnull(q_hat)
+          # add weighted regression loss against q_hat
+          s_vec = state(mem, s_idx)
+          @mx.nd_as_jl rw=s_vec begin
+            qhat_vec = get(q_hat)(squeeze(s_vec,2))
+            lossGrad += q_hat_bias*(qs - reshape(qhat_vec,size(qs)))
+          end
+        end
+
+        lossGradArray = copy(lossGrad, nn.ctx)
+        mx.backward( get(nn.exec), lossGradArray )
     end
 
     update!(nn)
@@ -298,11 +347,30 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
         end
     end
 
-    output_bias = get(solver.nn.exec).arg_dict[:output_bias]
-    @mx.nd_as_jl rw=output_bias begin
-      output_bias[:] = -1
-      output_bias[1] = 0
-      println("output_bias is $(output_bias)")
+    # output_bias = get(solver.nn.exec).arg_dict[:output_bias]
+    # @mx.nd_as_jl rw=output_bias begin
+    #   output_bias[:] = -1
+    #   output_bias[1] = 0
+    #   println("output_bias is $(output_bias)")
+    # end
+
+    # pretraining
+    if !isnull(solver.q_hat)
+      println("Pretraining neural network")
+      pretrain(solver.nn, mdp, get(solver.q_hat), rng)
+      for (param, param_target) in zip( get(solver.nn.exec).arg_arrays, get(solver.target_nn).arg_arrays )
+          mx.copy!(param_target, param)
+      end
+
+      policy.exec = get(solver.nn.exec)
+
+      # run learned policy for feedback
+      r_total = 0
+      N_sim = 100
+      for i in 1:N_sim
+          r_total += simulate(sim, mdp, policy, initial_state(mdp, rng))
+      end
+      println("\tAvg total reward: $(r_total/N_sim)")
     end
 
     terminalp = false
@@ -344,7 +412,7 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
                 if size( get(solver.replay_mem) ) > solver.nn.batch_size
                 # only update every batch_size steps? or what?
                     refresh_target = mod(ctr, solver.target_refresh_interval) == 0
-                    td = dqn_update!( solver.nn, get(solver.target_nn), get(solver.replay_mem), refresh_target, discount(mdp), rng )
+                    td = dqn_update!( solver.nn, get(solver.target_nn), get(solver.replay_mem), refresh_target, discount(mdp), solver.q_hat, solver.q_hat_bias, rng )
 
                     td_avg += td
                 end

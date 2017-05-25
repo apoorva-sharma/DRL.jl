@@ -2,7 +2,6 @@ push!(LOAD_PATH, ".")
 include(joinpath("..", "src", "DRL.jl"))
 using DRL
 importall POMDPModels
-using GraphViz
 using MXNet
 using DiscreteValueIteration
 using POMDPToolbox

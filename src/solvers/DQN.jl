@@ -190,8 +190,8 @@ end
 function pretrain( nn::NeuralNetwork, mdp, q_hat, rng)
   N = n_states(mdp)
   ss = states(mdp)
-  n_batches = 4000
-  batch_size = 64
+  n_batches = 7000
+  batch_size = 128
   for i = 1:n_batches
     l2_error = 0.
     for j = 1:batch_size
@@ -201,7 +201,6 @@ function pretrain( nn::NeuralNetwork, mdp, q_hat, rng)
       mx.copy!( get(nn.exec).arg_dict[nn.input_name], s_vec )
       mx.forward( get(nn.exec), is_train=true )
       qs = copy!( zeros(Float32, size(get(nn.exec).outputs[1])), get(nn.exec).outputs[1])
-
       qp = q_hat(s_vec)
       lossGrad = qs - reshape(qp, size(qs))
       l2_error += sum(lossGrad.^2)

@@ -10,7 +10,7 @@ using DataFrames
 # stuff to make things work
 importall POMDPs
 
-gw = GridWorld(); #GridWorld(sx=20,sy=1,rs=[GridWorldState(3,1)],rv=[5.],penalty=-10.0, tp=1.0)
+gw = GridWorld()#GridWorld(sx=20,sy=1,rs=[GridWorldState(3,1)],rv=[5.],penalty=-10.0, tp=1.0)
 sim = RolloutSimulator(max_steps=100)
 
 println("Solving with DVI")
@@ -26,21 +26,22 @@ function vec(s::GridWorldState)
 end
 
 function unvec(mdp::GridWorld, svec::Vector)
-    x = round(svec[1]*mdp.size_x)
-    y = round(svec[1]*mdp.size_y)
+    x = ceil(svec[1]*mdp.size_x)
+    y = ceil(svec[1]*mdp.size_y)
     done = (x == 0 && y == 0)
     GridWorldState(x, y, done)
 end
 
 
-function qhat(s)
-    s_idx = state_index(gw, unvec(gw, s))
+function qhat(s_vec)
+    s = unvec(gw, s_vec)
+    s_idx = state_index(gw, s)
     q_vec = dvipol.qmat[s_idx,:]
 end
 
 #DQN
 println("Solving with DQN, seeded with DVI Policy")
-dqn = rl.DQN(max_steps=50, checkpoint_interval=25, num_epochs=500, target_refresh_interval=100, q_hat=Nullable{Function}(qhat), q_hat_bias=0.05)
+dqn = rl.DQN(max_steps=50, checkpoint_interval=25, num_epochs=0, target_refresh_interval=100, q_hat=Nullable{Function}(qhat), q_hat_bias=0.05)
 dqnpol = rl.solve(dqn, gw)
 for s in iterator(states(gw))
     a = action(dqnpol, s)

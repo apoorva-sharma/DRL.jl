@@ -21,7 +21,7 @@ function NeuralNetwork(
                         arch::mx.SymbolicNode;
                         ctx::mx.Context=mx.cpu(),
                         init::Union{mx.AbstractInitializer,Vector{mx.AbstractInitializer}}=mx.XavierInitializer(),
-                        opt::mx.AbstractOptimizer=mx.ADAM(),
+                        opt::mx.AbstractOptimizer=mx.ADAM(grad_clip=1.),
                         exec::Nullable{mx.Executor}=Nullable{mx.Executor}(),
                         grad_arrays::Union{Void,Vector{mx.NDArray}}=nothing,
                         batch_size::Int=32,
@@ -165,7 +165,7 @@ function build_partial_mlp(inputs::Union{Symbol,Dict{MDPInput,Symbol}}=:data; ct
         input = mx.Variable(inputs)
     end
     arch = @mx.chain input =>
-                   mx.MLP([128, 128, 128])
+                   mx.MLP([128, 256, 128])
     return NeuralNetwork(arch, ctx=ctx, valid=false, input_name=inputs)
 end
 

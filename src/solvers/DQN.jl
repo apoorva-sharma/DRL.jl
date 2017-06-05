@@ -188,10 +188,13 @@ end
 
 function referenceQLoss(q, q_ref)
   _, correct_i = findmax(q_ref)
+  n_actions = length(q_ref)
   lossGrad = q - reshape(q_ref, size(q))
   # bias toward correct relative actions
-  biasedLossGrad = max(1*lossGrad, lossGrad) # bigger loss if overestimating q for incorrect action
-  biasedLossGrad[correct_i] = min(1*lossGrad[correct_i], lossGrad[correct_i]) # bigger loss for underestimating correct q
+  imbalance_factor = 5. 
+  biasedLossGrad = max(lossGrad, imbalance_factor*lossGrad) # bigger loss if overestimating q for incorrect action
+  biasedLossGrad[correct_i] = min(lossGrad[correct_i], (n_actions - 1)*imbalance_factor*lossGrad[correct_i]) # bigger loss for underestimating correct q
+
   loss = sum(biasedLossGrad.^2)
   (loss, biasedLossGrad)
 end

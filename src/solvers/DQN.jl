@@ -186,32 +186,55 @@ function action{S,A}(p::EpsilonGreedy, solver::DQN, mdp::MDP{S,A}, s::S, rng::Ab
 
 end
 
+function referenceQLoss(q, q_ref)
+  _, correct_i = findmax(q_ref)
+  lossGrad = q - reshape(q_ref, size(q))
+  # bias toward correct relative actions
+  biasedLossGrad = max(1*lossGrad, lossGrad) # bigger loss if overestimating q for incorrect action
+  biasedLossGrad[correct_i] = min(1*lossGrad[correct_i], lossGrad[correct_i]) # bigger loss for underestimating correct q
+  loss = sum(biasedLossGrad.^2)
+  (loss, biasedLossGrad)
+end
 
 function pretrain( nn::NeuralNetwork, mdp, q_hat, rng)
   N = n_states(mdp)
-  ss = states(mdp)
-  n_batches = 7000
+  ss = ordered_states(mdp)
+  sequence = randperm(N)
+  n_epochs = 5
   batch_size = 128
-  for i = 1:n_batches
+  checkpoint_interval = 25
+  n_checkpoints = Int64(floor(N/batch_size/checkpoint_interval)*n_epochs)
+  loss_hist = zeros(n_checkpoints)
+  k = 1
+  for i = 1:n_epochs
     l2_error = 0.
-    for j = 1:batch_size
-      s_idx = rand(rng, 1:N)
-      s_vec = vec(mdp, ss[s_idx])
+    for j = 1:N
+      s_vec = vec(mdp, ss[sequence[j]])
       # setup target, do forward, backward pass to get gradient
       mx.copy!( get(nn.exec).arg_dict[nn.input_name], s_vec )
       mx.forward( get(nn.exec), is_train=true )
       qs = copy!( zeros(Float32, size(get(nn.exec).outputs[1])), get(nn.exec).outputs[1])
-      qp = q_hat(s_vec)
-      lossGrad = qs - reshape(qp, size(qs))
-      l2_error += sum(lossGrad.^2)
+      q_ref = q_hat(s_vec)
 
-      mx.backward( get(nn.exec), copy(lossGrad, nn.ctx) )
+      loss, grad = referenceQLoss(qs, q_ref)
+      l2_error += loss
+
+      mx.backward( get(nn.exec), copy(grad, nn.ctx) )
+
+      if mod(j, batch_size) == 0
+        batch_i = floor(j/batch_size)
+        if mod(batch_i, checkpoint_interval) == 0
+          println(" epoch $(i), batch $(batch_i):\tavg loss: $(l2_error)")
+          loss_hist[k] = l2_error
+          k += 1
+          l2_error = 0.
+        end
+        update!(nn)
+      end
     end
-    if mod(i, 25) == 0
-      println(" batch $(i):\tl2 error: $(l2_error/batch_size)")
-    end
-    update!(nn)
   end
+
+  writedlm(open("pretraining_loss.txt", "w"), loss_hist)
 end
 
 function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemory, refresh_target::Bool, disc::Float64, q_hat, q_hat_bias, rng::AbstractRNG )
@@ -295,7 +318,8 @@ function dqn_update!( nn::NeuralNetwork, target_nn::mx.Executor, mem::ReplayMemo
           s_vec = state(mem, s_idx)
           @mx.nd_as_jl rw=s_vec begin
             qhat_vec = get(q_hat)(squeeze(s_vec,2))
-            lossGrad += q_hat_bias*(qs - reshape(qhat_vec,size(qs)))
+            _, grad = referenceQLoss(qs, qhat_vec)
+            lossGrad += q_hat_bias*grad
           end
         end
 
@@ -332,7 +356,6 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
 
     # complete setup for neural network if necessary (This is most often the case)
     if !solver.nn.valid
-        warn("You didn't specify a neural network or your number of output units didn't match the number of actions. Either way, not recommended")
         solver.nn.arch = mx.FullyConnected(mx.SymbolicNode, name=:output, num_hidden=length(As), data=solver.nn.arch)
         solver.nn.valid = true
     end

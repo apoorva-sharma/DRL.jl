@@ -21,7 +21,7 @@ function NeuralNetwork(
                         arch::mx.SymbolicNode;
                         ctx::mx.Context=mx.cpu(),
                         init::Union{mx.AbstractInitializer,Vector{mx.AbstractInitializer}}=mx.XavierInitializer(),
-                        opt::mx.AbstractOptimizer=mx.ADAM(grad_clip=1.),
+                        opt::mx.AbstractOptimizer=mx.ADAM(),
                         exec::Nullable{mx.Executor}=Nullable{mx.Executor}(),
                         grad_arrays::Union{Void,Vector{mx.NDArray}}=nothing,
                         batch_size::Int=32,
@@ -156,7 +156,7 @@ function initialize!(nn::NeuralNetwork, mdp::Union{MDP,mx.AbstractDataProvider};
 end
 
 
-function build_partial_mlp(inputs::Union{Symbol,Dict{MDPInput,Symbol}}=:data; ctx=mx.cpu())
+function build_partial_mlp(inputs::Union{Symbol,Dict{MDPInput,Symbol}}=:data; ctx=mx.cpu(), hidden_sizes=[128, 64])
     # TODO there's an issue wit this
     if isa(inputs, Dict)
         input_sym = [mx.Variable(input) for input in values(inputs)]
@@ -165,7 +165,7 @@ function build_partial_mlp(inputs::Union{Symbol,Dict{MDPInput,Symbol}}=:data; ct
         input = mx.Variable(inputs)
     end
     arch = @mx.chain input =>
-                   mx.MLP([128, 256, 128])
+                   mx.MLP(hidden_sizes)
     return NeuralNetwork(arch, ctx=ctx, valid=false, input_name=inputs)
 end
 

@@ -300,7 +300,7 @@ function solve{S,A}(solver::GDQN, mdp::MDP{S,A}; policy::GDQNPolicy=create_polic
     # setup experience replay; initialized here because of the whole solve paradigm (decouple solver, problem)
     if isnull(solver.replay_mem)
         # TODO add option to choose what kind of replayer to use
-        solver.replay_mem = UniformMemory(mdp, mem_size=8192) #PrioritizedMemory(mdp,capacity=8192) #
+        solver.replay_mem = UniformMemory(mdp, mem_size=10000) #PrioritizedMemory(mdp,capacity=8192) #
     end
 
 

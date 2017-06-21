@@ -20,6 +20,8 @@ type DQN <: POMDPs.Solver
     # stuff for if we have an estimate of the true q function
     q_hat::Nullable{Function} # should take state, output vector of q values of each action
     q_hat_bias::Real
+    pretrain_batch_size::Int
+    pretrain_num_batches::Int
 
     # exception stuff from History Recorder -- couldn't hurt
     capture_exception::Bool
@@ -27,7 +29,7 @@ type DQN <: POMDPs.Solver
     backtrace::Nullable{Any}
 end
 function DQN(;
-            nn::NeuralNetwork=build_partial_mlp(ctx=mx.cpu()),
+            nn::NeuralNetwork=build_partial_mlp(ctx=mx.cpu(),hidden_sizes=[128,64,32]),
             target_nn::Nullable{mx.Executor}=Nullable{mx.Executor}(),
             exp_pol::ExplorationPolicy=EpsilonGreedy(),
             max_steps::Int=100,
@@ -42,6 +44,8 @@ function DQN(;
             replay_mem::Nullable{ReplayMemory}=Nullable{ReplayMemory}(),
             q_hat::Nullable{Function}=Nullable{Function}(),
             q_hat_bias::Real=1.,
+            pretrain_batch_size::Int=128,
+            pretrain_num_batches::Int=1000,
             capture_exception::Bool=false,
             target_refresh_interval::Int=10000
             )
@@ -61,6 +65,8 @@ function DQN(;
                 target_refresh_interval,
                 q_hat,
                 q_hat_bias,
+                pretrain_batch_size,
+                pretrain_num_batches,
                 capture_exception,
                 nothing,
                 nothing
@@ -191,7 +197,7 @@ function referenceQLoss(q, q_ref)
   n_actions = length(q_ref)
   lossGrad = q - reshape(q_ref, size(q))
   # bias toward correct relative actions
-  imbalance_factor = 5. 
+  imbalance_factor = 5.
   biasedLossGrad = max(lossGrad, imbalance_factor*lossGrad) # bigger loss if overestimating q for incorrect action
   biasedLossGrad[correct_i] = min(lossGrad[correct_i], (n_actions - 1)*imbalance_factor*lossGrad[correct_i]) # bigger loss for underestimating correct q
 
@@ -199,19 +205,24 @@ function referenceQLoss(q, q_ref)
   (loss, biasedLossGrad)
 end
 
-function pretrain( nn::NeuralNetwork, mdp, q_hat, rng)
+function pretrain( nn::NeuralNetwork, mdp, q_hat, rng, num_batches, batch_size)
   N = n_states(mdp)
+  println("N: $N. num_batches: $num_batches, batch_size: $batch_size")
+  batch_size = min(N, batch_size)
   ss = ordered_states(mdp)
   sequence = randperm(N)
-  n_epochs = 5
-  batch_size = 128
+  batches_per_epoch = Int64(floor(N/batch_size)+1)
+  n_epochs = Int64(floor((num_batches-1)/batches_per_epoch) + 1)
+  steps_per_epoch = min(N, num_batches*batch_size)
   checkpoint_interval = 25
-  n_checkpoints = Int64(floor(N/batch_size/checkpoint_interval)*n_epochs)
+  n_checkpoints = Int64(floor((N-1)/batch_size/checkpoint_interval + 1)*n_epochs)
+  println("Starting pretraining, using $(n_epochs) epoch(s), with $(steps_per_epoch) steps per epoch, and a batch size of $(batch_size). There will be $(n_checkpoints) checkpoints.")
+
   loss_hist = zeros(n_checkpoints)
   k = 1
   for i = 1:n_epochs
     l2_error = 0.
-    for j = 1:N
+    for j = 1:steps_per_epoch
       s_vec = vec(mdp, ss[sequence[j]])
       # setup target, do forward, backward pass to get gradient
       mx.copy!( get(nn.exec).arg_dict[nn.input_name], s_vec )
@@ -224,7 +235,7 @@ function pretrain( nn::NeuralNetwork, mdp, q_hat, rng)
 
       mx.backward( get(nn.exec), copy(grad, nn.ctx) )
 
-      if mod(j, batch_size) == 0
+      if mod(j-1, batch_size) == 0
         batch_i = floor(j/batch_size)
         if mod(batch_i, checkpoint_interval) == 0
           println(" epoch $(i), batch $(batch_i):\tavg loss: $(l2_error)")
@@ -382,7 +393,7 @@ function solve{S,A}(solver::DQN, mdp::MDP{S,A}, policy::DQNPolicy=create_policy(
     # pretraining
     if !isnull(solver.q_hat)
       println("Pretraining neural network")
-      pretrain(solver.nn, mdp, get(solver.q_hat), rng)
+      pretrain(solver.nn, mdp, get(solver.q_hat), rng, solver.pretrain_num_batches, solver.pretrain_batch_size)
       for (param, param_target) in zip( get(solver.nn.exec).arg_arrays, get(solver.target_nn).arg_arrays )
           mx.copy!(param_target, param)
       end

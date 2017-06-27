@@ -10,5 +10,3 @@ There are a lot of solvers that have been partially implemented in this reposito
 NOTE: the signature for solve doesn't exactly match `POMDPs.solve`. It is `solve(::Solver, ::MDP, ::Policy, ::rng)`
 
 NOTE: try to define your vectors as Float32 if possible (which is what mxnet uses)
-
-Documentation someday

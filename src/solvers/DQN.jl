@@ -215,7 +215,7 @@ function pretrain( nn::NeuralNetwork, mdp, q_hat, rng, num_batches, batch_size)
   n_epochs = Int64(floor((num_batches-1)/batches_per_epoch) + 1)
   steps_per_epoch = min(N, num_batches*batch_size)
   checkpoint_interval = 25
-  n_checkpoints = Int64(floor((N-1)/batch_size/checkpoint_interval + 1)*n_epochs)
+  n_checkpoints = Int64(floor((steps_per_epoch-1)/batch_size/checkpoint_interval + 1)*n_epochs)
   println("Starting pretraining, using $(n_epochs) epoch(s), with $(steps_per_epoch) steps per epoch, and a batch size of $(batch_size). There will be $(n_checkpoints) checkpoints.")
 
   loss_hist = zeros(n_checkpoints)

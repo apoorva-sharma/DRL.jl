@@ -2,25 +2,13 @@
 
 ## Deep Reinforcement Learning for Julia
 
-It's actually not so gradiose. 
+This is a fork of [\@cho3's DRL.jl](https://github.com/cho3/DRL.jl), a package that tries to provide implementations Deep Reinforcement Learning algorithms for solving any problem that can be expressed in the [POMDPs.jl](https://github.com/JuliaPOMDP/POMDPs.jl) framework. It leverages [MXNet.jl](https://github.com/dmlc/MXNet.jl), a neural network framework with Julia libraries. I have found MXNet (at least when working with the Julia library) to be cumbersome at times, and considering that there is now a TensorFlow julia library, I would consider porting this codebase to use that.
 
-Julia implementations of deep reinforcement learning algorithms. Uses the [POMDPs.jl](https://github.com/JuliaPOMDP/POMDPs.jl) framework for representing (Partially Observable) Markov Decision Proccesses (which itself is a framework for describing sequential decision making problems). 
+There are a lot of solvers that have been partially implemented in this repository, but currently only DQN is working. Additionally, I have added a "Guided DQN" implementation which attempts to choose the initial state for each simulation in a way that selects "surprising" trajectories, in an effort to use importance sampling over trajectories to obtain better training performance. It is not fully tested, and it is unclear at this point whether this approach is actually useful.
 
-Working-ish:
-* Deep Q Learning (DQN)
 
-Currently working on:
-* Model-Free Episodic Control (QEC)
-* Deterministic Policy Gradient (DDPG)
+NOTE: the signature for solve doesn't exactly match `POMDPs.solve`. It is `solve(::Solver, ::MDP, ::Policy, ::rng)`
 
-To work on:
-* Stochastic Policy Gradient (SDPG)
-* Trust Region Policy Optimization (TRPO)
-* Trust Region Generalized Advantage Estimate (TRGAE)
-* VIME
-* Misc NN models for MXNet (GAN, VAE, RNN)
-
-NOTE: the signature for solve doesn't exactly match `POMDPs.solve`. It is `solve(::Solver, ::MDP, ::Policy, ::rng)
 NOTE: try to define your vectors as Float32 if possible (which is what mxnet uses)
 
 Documentation someday
